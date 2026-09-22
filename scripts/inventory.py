@@ -52,7 +52,7 @@ FORMAT_FIELDS = (
     "#{@agent_picker_summary_turn}",
 )
 TMUX_FORMAT = SEP.join(FORMAT_FIELDS)
-BRIDGE_VERSION = "2"
+BRIDGE_VERSION = "3"
 
 
 def apply_bell_overlay(windows: list[Window]) -> None:
@@ -213,7 +213,8 @@ def select(value: str, remote_tmux: str = "") -> int:
             replace.append(window_id)
     if matches:
         _, _, window_id = max(matches)
-        run(["tmux", "rename-window", "-t", window_id, bridge_name])
+        # A local bridge name may have been deliberately customized. Keep it
+        # intact on reuse; a new bridge receives the current remote title.
         return run(["tmux", "select-window", "-t", window_id]).returncode
 
     # tmux stores the selected window on a session, not a client. Leaving two

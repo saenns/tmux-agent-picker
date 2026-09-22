@@ -189,10 +189,10 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
     for line in text.splitlines():
         if not line:
             continue
-        # tmux 3.5a renders a control-character format separator as its octal
-        # spelling ("\\037") when invoked remotely.  Older tmux versions
+        # Remote tmux 3.5a can render the separator as either an octal
+        # ("\\037") or hexadecimal ("\\x1f") spelling. Older versions
         # return the control character directly.
-        line = line.replace("\\037", SEP)
+        line = line.replace("\\037", SEP).replace("\\x1f", SEP)
         fields = line.split(SEP)
         if len(fields) != 24:
             continue
