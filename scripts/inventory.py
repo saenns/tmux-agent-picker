@@ -52,6 +52,7 @@ FORMAT_FIELDS = (
     "#{@agent_picker_summary_turn}",
 )
 TMUX_FORMAT = SEP.join(FORMAT_FIELDS)
+BRIDGE_VERSION = "2"
 
 
 def apply_bell_overlay(windows: list[Window]) -> None:
@@ -182,7 +183,7 @@ def select(value: str, remote_tmux: str = "") -> int:
             "-F", SEP.join((
                 "#{session_id}", "#{window_id}", "#{@agent_picker_remote_key}",
                 "#{@agent_picker_remote_session_key}", "#{@agent_picker_proxy_session}",
-                "#{window_active}", "#{window_activity}",
+                "#{@agent_picker_bridge_version}", "#{window_active}", "#{window_activity}",
             )),
         ]
     )
@@ -193,10 +194,10 @@ def select(value: str, remote_tmux: str = "") -> int:
         # instead of the control byte. Without this normalization bridge
         # reuse always misses and opens a new SSH attachment.
         fields = line.replace("\\037", SEP).split(SEP)
-        if len(fields) != 7 or fields[0] != current_session:
+        if len(fields) != 8 or fields[0] != current_session:
             continue
-        _, window_id, remote_key, existing_session_key, existing_proxy, active, activity = fields
-        if remote_key == target["key"] and existing_proxy == proxy_session:
+        _, window_id, remote_key, existing_session_key, existing_proxy, bridge_version, active, activity = fields
+        if remote_key == target["key"] and existing_proxy == proxy_session and bridge_version == BRIDGE_VERSION:
             try:
                 activity_value = int(activity or 0)
             except ValueError:
@@ -234,6 +235,7 @@ def select(value: str, remote_tmux: str = "") -> int:
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_key", target["key"]])
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_session_key", remote_session_key])
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_proxy_session", proxy_session])
+        run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_bridge_version", BRIDGE_VERSION])
         run([str(Path(__file__).resolve().with_name("refresh_bells.py"))])
     return created.returncode
 

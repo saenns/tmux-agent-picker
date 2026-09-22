@@ -145,7 +145,10 @@ def remote_attach_command(
             *tmux_command, "new-session", "-d", "-t", target["session"], "-s", proxy_session,
         ])
         select_window = shlex.join([
-            *tmux_command, "select-window", "-t", f"{proxy_session}:{target['window_id']}",
+            # @window_id is global in tmux target syntax: `proxy:@42` still
+            # selects @42 in the invoking client's session. An index is
+            # session-scoped, so it reliably selects it in the proxy session.
+            *tmux_command, "select-window", "-t", f"{proxy_session}:{target['window']}",
         ])
         select_pane = shlex.join([*tmux_command, "select-pane", "-t", target["pane"]])
         attach = shlex.join([*tmux_command, "attach-session", "-t", proxy_session])
