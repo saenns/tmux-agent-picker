@@ -32,6 +32,7 @@ refresh() {
     --ssh-batch-mode "$batch_mode" \
     --remote-tmux "$remote_tmux" \
     --ssh-retries "$retries" \
+    --remote-watch "$remote_watch" \
     --cache-file "$cache_root/inventory-$cache_key.json" \
     --refresh-cache >/dev/null 2>&1
 }

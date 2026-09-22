@@ -272,6 +272,7 @@ def main() -> int:
     parser.add_argument("--ssh-batch-mode", choices=("yes", "no", "auto"), default="yes")
     parser.add_argument("--remote-tmux", default="")
     parser.add_argument("--ssh-retries", type=int, default=0)
+    parser.add_argument("--remote-watch", choices=("yes", "off"), default="off")
     parser.add_argument("--cache-file")
     parser.add_argument("--refresh-cache", action="store_true")
     parser.add_argument("--select")
@@ -288,7 +289,8 @@ def main() -> int:
             save_cache(cache_path, windows, remote_history)
     else:
         windows, remote_history = cached
-    apply_remote_watch_overlay(windows, remote_history, cache_path)
+    if args.remote_watch == "yes":
+        apply_remote_watch_overlay(windows, remote_history, cache_path)
     apply_bell_overlay(windows)
     mru = load_mru()
     # A selection made through this picker is recorded locally immediately.

@@ -8,6 +8,7 @@ timeout=$(tmux show-option -gqv @agent-picker-ssh-timeout)
 batch_mode=$(tmux show-option -gqv @agent-picker-ssh-batch-mode)
 remote_tmux=$(tmux show-option -gqv @agent-picker-remote-tmux)
 retries=$(tmux show-option -gqv @agent-picker-ssh-retries)
+remote_watch=$(tmux show-option -gqv @agent-picker-remote-watch)
 fzf_bin=$(tmux show-option -gqv @agent-picker-fzf)
 current_window=$(tmux display-message -p '#{window_id}')
 
@@ -15,6 +16,7 @@ sort_mode=${sort_mode:-mru}
 timeout=${timeout:-2}
 batch_mode=${batch_mode:-yes}
 retries=${retries:-0}
+remote_watch=${remote_watch:-off}
 cache_root=${XDG_CACHE_HOME:-$HOME/.cache}/tmux-agent-picker
 cache_key=$(printf '%s' "$hosts|$timeout|$batch_mode|$remote_tmux|$retries" | shasum -a 256 | awk '{print $1}')
 cache_file="$cache_root/inventory-$cache_key.json"
@@ -42,6 +44,7 @@ inventory() {
     --ssh-batch-mode "$batch_mode" \
     --remote-tmux "$remote_tmux" \
     --ssh-retries "$retries" \
+    --remote-watch "$remote_watch" \
     --current-window "$current_window" \
     --cache-file "$cache_file" "$@"
 }
@@ -56,6 +59,7 @@ reload_command() {
     --ssh-batch-mode "$batch_mode" \
     --remote-tmux "$remote_tmux" \
     --ssh-retries "$retries" \
+    --remote-watch "$remote_watch" \
     --current-window "$current_window" \
     --cache-file "$cache_file"
 }
