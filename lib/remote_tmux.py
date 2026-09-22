@@ -162,9 +162,18 @@ def remote_attach_command(
     return shlex.join([str(bridge), target["ssh"], remote])
 
 
-def remote_focus_command(target: dict[str, str], remote_tmux: str = "") -> str:
+def remote_focus_command(
+    target: dict[str, str], remote_tmux: str = "", proxy_session: str = ""
+) -> str:
     """Return the non-interactive tmux focus command for an existing bridge."""
     tmux_command = remote_tmux_command(target.get("host", ""), remote_tmux)
+    if proxy_session:
+        window_target = f"{proxy_session}:{target['window']}"
+        pane_target = f"{window_target}.{target.get('pane_index', '0')}"
+        return shlex.join([
+            *tmux_command, "select-window", "-t", window_target, ";",
+            *tmux_command, "select-pane", "-t", pane_target,
+        ])
     return shlex.join([
         *tmux_command, "select-window", "-t", target["window_id"], ";",
         "select-pane", "-t", target["pane"],

@@ -22,7 +22,7 @@ from agent_picker import (  # noqa: E402
     scrollback_summary,
     sort_windows,
 )
-from remote_tmux import collect_remote_windows, remote_attach_command
+from remote_tmux import collect_remote_windows, remote_attach_command, remote_focus_command
 
 
 FORMAT_FIELDS = (
@@ -194,12 +194,12 @@ def select(value: str, remote_tmux: str = "") -> int:
         ]
     )
     matches: list[tuple[bool, int, str]] = []
-    replace: list[str] = []
+    replace: list[tuple[str, str]] = []
     for line in existing.stdout.splitlines():
         # tmux 3.5 may render the format separator as the octal spelling
         # instead of the control byte. Without this normalization bridge
         # reuse always misses and opens a new SSH attachment.
-        fields = line.replace("\\037", SEP).split(SEP)
+        fields = line.replace("\\037", SEP).replace("\\x1f", SEP).split(SEP)
         if len(fields) != 8 or fields[0] != current_session:
             continue
         _, window_id, remote_key, existing_session_key, existing_proxy, bridge_version, active, activity = fields
@@ -210,17 +210,33 @@ def select(value: str, remote_tmux: str = "") -> int:
                 activity_value = 0
             matches.append((active == "1", activity_value, window_id))
         elif existing_session_key == remote_session_key or remote_key.rsplit("|", 1)[0] == remote_session_key:
-            replace.append(window_id)
+            replace.append((window_id, existing_proxy))
     if matches:
         _, _, window_id = max(matches)
         # A local bridge name may have been deliberately customized. Keep it
         # intact on reuse; a new bridge receives the current remote title.
         return run(["tmux", "select-window", "-t", window_id]).returncode
 
-    # tmux stores the selected window on a session, not a client. Leaving two
-    # bridges attached to one remote session lets each bridge show whichever
-    # target was selected most recently. Keep one bridge per remote session.
-    for window_id in replace:
+    # Retarget an existing isolated bridge in place. This leaves its SSH
+    # attachment alive, avoiding a visible reconnect for every window pick.
+    reusable = next(((window_id, proxy) for window_id, proxy in replace if proxy == proxy_session), None)
+    if reusable:
+        window_id, _ = reusable
+        bridge = Path(__file__).resolve().with_name("bridge.sh")
+        focused = run([str(bridge), target["ssh"], remote_focus_command(target, remote_tmux, proxy_session)])
+        if focused.returncode == 0:
+            for duplicate_id, _ in replace:
+                if duplicate_id != window_id:
+                    run(["tmux", "kill-window", "-t", duplicate_id])
+            run(["tmux", "rename-window", "-t", window_id, bridge_name])
+            run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_key", target["key"]])
+            run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_bridge_version", BRIDGE_VERSION])
+            run([str(Path(__file__).resolve().with_name("refresh_bells.py"))])
+            return run(["tmux", "select-window", "-t", window_id]).returncode
+
+    # No compatible bridge exists (or its control command failed): replace it
+    # with a fresh isolated attachment.
+    for window_id, _ in replace:
         run(["tmux", "kill-window", "-t", window_id])
 
     command = remote_attach_command(target, remote_tmux, proxy_session)

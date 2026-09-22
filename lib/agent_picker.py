@@ -387,6 +387,7 @@ def format_row(window: Window, current_window: str = "") -> str:
             "window": window.window_index,
             "bridge_name": f"{window.host}:{window.window_index} {truncate(clean(name), 45)}",
             "pane": pane.pane_id,
+            "pane_index": pane.pane_index,
             "key": window.key,
         }
     )
