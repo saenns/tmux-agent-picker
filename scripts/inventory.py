@@ -35,6 +35,7 @@ FORMAT_FIELDS = (
     "#{window_name}",
     "#{window_active}",
     "#{window_bell_flag}",
+    "#{@last_view}",
     "#{pane_id}",
     "#{pane_index}",
     "#{pane_active}",
@@ -146,7 +147,13 @@ def remote_inventory(
         time.sleep(0.2)
     if result and result.returncode == 0:
         windows = parse_inventory(result.stdout, label, target)
-        return windows, remote_mru(label, target, ssh_command, windows, timeout)
+        history = remote_mru(label, target, ssh_command, windows, timeout)
+        # Some hosts use tmux-fzf's @last_view hook as the canonical focus
+        # history. Prefer it over the generic picker history when available.
+        for window in windows:
+            if window.last_view:
+                history[window.key] = window.last_view
+        return windows, history
     return [
         Window(
             host=label,
@@ -209,6 +216,7 @@ def save_cache(path: Path, windows: list[Window], remote_history: dict[str, floa
                 "window_name": window.window_name,
                 "active": window.active,
                 "bell": window.bell,
+                "last_view": window.last_view,
                 "panes": [pane.__dict__ for pane in window.panes],
             }
             for window in windows
