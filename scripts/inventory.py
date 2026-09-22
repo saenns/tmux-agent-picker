@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -168,6 +169,11 @@ def select(value: str, remote_tmux: str = "") -> int:
     bridge_name = target.get("bridge_name") or f"{target['host']}:{target['session']}"
     current_session = run(["tmux", "display-message", "-p", "#{session_id}"]).stdout.strip()
     remote_session_key = f"{target['host']}|{target.get('session_id', '')}"
+    # This name is stable for one local tmux session and one remote source
+    # session. It is deliberately a separate remote session in the same tmux
+    # group, so other remote clients cannot change the bridge's selection.
+    proxy_digest = hashlib.sha256(f"{current_session}|{remote_session_key}".encode()).hexdigest()[:16]
+    proxy_session = f"__tap_{proxy_digest}"
     existing = run(
         [
             "tmux",
@@ -175,7 +181,8 @@ def select(value: str, remote_tmux: str = "") -> int:
             "-a",
             "-F", SEP.join((
                 "#{session_id}", "#{window_id}", "#{@agent_picker_remote_key}",
-                "#{@agent_picker_remote_session_key}", "#{window_active}", "#{window_activity}",
+                "#{@agent_picker_remote_session_key}", "#{@agent_picker_proxy_session}",
+                "#{window_active}", "#{window_activity}",
             )),
         ]
     )
@@ -186,10 +193,10 @@ def select(value: str, remote_tmux: str = "") -> int:
         # instead of the control byte. Without this normalization bridge
         # reuse always misses and opens a new SSH attachment.
         fields = line.replace("\\037", SEP).split(SEP)
-        if len(fields) != 6 or fields[0] != current_session:
+        if len(fields) != 7 or fields[0] != current_session:
             continue
-        _, window_id, remote_key, existing_session_key, active, activity = fields
-        if remote_key == target["key"]:
+        _, window_id, remote_key, existing_session_key, existing_proxy, active, activity = fields
+        if remote_key == target["key"] and existing_proxy == proxy_session:
             try:
                 activity_value = int(activity or 0)
             except ValueError:
@@ -208,7 +215,7 @@ def select(value: str, remote_tmux: str = "") -> int:
     for window_id in replace:
         run(["tmux", "kill-window", "-t", window_id])
 
-    command = remote_attach_command(target, remote_tmux)
+    command = remote_attach_command(target, remote_tmux, proxy_session)
     created = run(
         [
             "tmux",
@@ -226,6 +233,7 @@ def select(value: str, remote_tmux: str = "") -> int:
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_bridge", "1"])
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_key", target["key"]])
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_session_key", remote_session_key])
+        run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_proxy_session", proxy_session])
         run([str(Path(__file__).resolve().with_name("refresh_bells.py"))])
     return created.returncode
 

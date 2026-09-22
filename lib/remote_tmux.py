@@ -70,7 +70,10 @@ def remote_inventory(
     hooks are needed for remote MRU ordering.
     """
     tmux_command = remote_tmux_command(label, remote_tmux)
-    hook_command = "set-option -w -t '#{window_id}' @agent_picker_last_view '#{t:%s}'"
+    # A hook already runs with the newly selected window as its context.
+    # Explicitly targeting ``#{window_id}`` is not expanded by older tmux
+    # versions and makes a successful select-window report an error instead.
+    hook_command = "set-option -w @agent_picker_last_view '#{t:%s}'"
     install_hook = shlex.join([*tmux_command, "set-hook", "-g", "after-select-window[999]", hook_command])
     list_panes = shlex.join([*tmux_command, "list-panes", "-a", "-F", tmux_format])
     # tmux 1.8 (still used by some hosts) has no `set-hook` command. Focus
@@ -130,12 +133,34 @@ def collect_remote_windows(
     return windows, history
 
 
-def remote_attach_command(target: dict[str, str], remote_tmux: str = "") -> str:
+def remote_attach_command(
+    target: dict[str, str], remote_tmux: str = "", proxy_session: str = ""
+) -> str:
+    """Attach through a private grouped session when ``proxy_session`` is set.
+
+    A normal ``attach-session`` shares the remote session's selected window
+    with every other client.  That means a local bridge can visibly jump when
+    somebody (or another bridge) selects a window on the remote host.  A tmux
+    session group shares the *windows* while retaining a per-session selected
+    window, which is exactly the isolation a bridge needs.
+    """
     tmux_command = remote_tmux_command(target.get("host", ""), remote_tmux)
-    remote = shlex.join([
-        *tmux_command, "select-window", "-t", target["window_id"], ";",
-        "select-pane", "-t", target["pane"], ";", "attach-session", "-t", target["session"],
-    ])
+    if proxy_session:
+        has_proxy = shlex.join([*tmux_command, "has-session", "-t", proxy_session])
+        create_proxy = shlex.join([
+            *tmux_command, "new-session", "-d", "-t", target["session"], "-s", proxy_session,
+        ])
+        select_window = shlex.join([
+            *tmux_command, "select-window", "-t", f"{proxy_session}:{target['window_id']}",
+        ])
+        select_pane = shlex.join([*tmux_command, "select-pane", "-t", target["pane"]])
+        attach = shlex.join([*tmux_command, "attach-session", "-t", proxy_session])
+        remote = f"({has_proxy} || {create_proxy}) && {select_window} && {select_pane} && {attach}"
+    else:
+        remote = shlex.join([
+            *tmux_command, "select-window", "-t", target["window_id"], ";",
+            "select-pane", "-t", target["pane"], ";", "attach-session", "-t", target["session"],
+        ])
     bridge = Path(__file__).resolve().parents[1] / "scripts" / "bridge.sh"
     return shlex.join([str(bridge), target["ssh"], remote])
 
