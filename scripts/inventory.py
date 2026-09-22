@@ -191,10 +191,18 @@ def select(value: str, remote_tmux: str = "") -> int:
         _, _, window_id = max(matches)
         # The bridge remains attached, but another remote client may have
         # changed the session's selected window since it was opened. Focus the
-        # requested remote target first; this also clears its native bell flag.
+        # requested remote target; this also clears its native bell flag. Do
+        # not delay switching the local bridge while WSSH establishes a
+        # control connection.
         try:
-            run(["ssh", "-o", "ConnectTimeout=2", target["ssh"], remote_focus_command(target, remote_tmux)], timeout=3)
-        except (subprocess.TimeoutExpired, OSError):
+            subprocess.Popen(
+                ["ssh", "-o", "ConnectTimeout=2", target["ssh"], remote_focus_command(target, remote_tmux)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
             pass
         return run(["tmux", "select-window", "-t", window_id]).returncode
 
