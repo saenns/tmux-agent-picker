@@ -171,14 +171,25 @@ def select(value: str, remote_tmux: str = "") -> int:
             "tmux",
             "list-windows",
             "-a",
-            "-F",
-            "#{window_id}" + SEP + "#{@agent_picker_remote_key}",
+            "-F", SEP.join(("#{window_id}", "#{@agent_picker_remote_key}", "#{window_active}", "#{window_activity}")),
         ]
     )
+    matches: list[tuple[bool, int, str]] = []
     for line in existing.stdout.splitlines():
-        fields = line.split(SEP)
-        if len(fields) == 2 and fields[1] == target["key"]:
-            return run(["tmux", "select-window", "-t", fields[0]]).returncode
+        # tmux 3.5 may render the format separator as the octal spelling
+        # instead of the control byte. Without this normalization bridge
+        # reuse always misses and opens a new SSH attachment.
+        fields = line.replace("\\037", SEP).split(SEP)
+        if len(fields) != 4 or fields[1] != target["key"]:
+            continue
+        try:
+            activity = int(fields[3] or 0)
+        except ValueError:
+            activity = 0
+        matches.append((fields[2] == "1", activity, fields[0]))
+    if matches:
+        _, _, window_id = max(matches)
+        return run(["tmux", "select-window", "-t", window_id]).returncode
 
     command = remote_attach_command(target, remote_tmux)
     created = run(
