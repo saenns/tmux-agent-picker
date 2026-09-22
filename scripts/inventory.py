@@ -125,7 +125,13 @@ def load_cache(path: Path) -> tuple[list[Window], dict[str, float]] | None:
         windows = []
         for item in payload["windows"]:
             panes = [Pane(**pane) for pane in item.pop("panes", [])]
-            windows.append(Window(**item, panes=panes))
+            window = Window(**item, panes=panes)
+            # Cache files written before proxy-session filtering may still
+            # contain grouped bridge copies. Do not let a stale duplicate
+            # hide or outrank its real source-session window.
+            if window.session_name.startswith("__tap_"):
+                continue
+            windows.append(window)
         return windows, {str(key): float(value) for key, value in payload.get("mru", {}).items()}
     except (FileNotFoundError, OSError, ValueError, TypeError, KeyError):
         return None
