@@ -166,31 +166,47 @@ def select(value: str, remote_tmux: str = "") -> int:
         return selected.returncode or switched.returncode
 
     bridge_name = target.get("bridge_name") or f"{target['host']}:{target['session']}"
+    current_session = run(["tmux", "display-message", "-p", "#{session_id}"]).stdout.strip()
+    remote_session_key = f"{target['host']}|{target.get('session_id', '')}"
     existing = run(
         [
             "tmux",
             "list-windows",
             "-a",
-            "-F", SEP.join(("#{window_id}", "#{@agent_picker_remote_key}", "#{window_active}", "#{window_activity}")),
+            "-F", SEP.join((
+                "#{session_id}", "#{window_id}", "#{@agent_picker_remote_key}",
+                "#{@agent_picker_remote_session_key}", "#{window_active}", "#{window_activity}",
+            )),
         ]
     )
     matches: list[tuple[bool, int, str]] = []
+    replace: list[str] = []
     for line in existing.stdout.splitlines():
         # tmux 3.5 may render the format separator as the octal spelling
         # instead of the control byte. Without this normalization bridge
         # reuse always misses and opens a new SSH attachment.
         fields = line.replace("\\037", SEP).split(SEP)
-        if len(fields) != 4 or fields[1] != target["key"]:
+        if len(fields) != 6 or fields[0] != current_session:
             continue
-        try:
-            activity = int(fields[3] or 0)
-        except ValueError:
-            activity = 0
-        matches.append((fields[2] == "1", activity, fields[0]))
+        _, window_id, remote_key, existing_session_key, active, activity = fields
+        if remote_key == target["key"]:
+            try:
+                activity_value = int(activity or 0)
+            except ValueError:
+                activity_value = 0
+            matches.append((active == "1", activity_value, window_id))
+        elif existing_session_key == remote_session_key or remote_key.rsplit("|", 1)[0] == remote_session_key:
+            replace.append(window_id)
     if matches:
         _, _, window_id = max(matches)
         run(["tmux", "rename-window", "-t", window_id, bridge_name])
         return run(["tmux", "select-window", "-t", window_id]).returncode
+
+    # tmux stores the selected window on a session, not a client. Leaving two
+    # bridges attached to one remote session lets each bridge show whichever
+    # target was selected most recently. Keep one bridge per remote session.
+    for window_id in replace:
+        run(["tmux", "kill-window", "-t", window_id])
 
     command = remote_attach_command(target, remote_tmux)
     created = run(
@@ -209,6 +225,7 @@ def select(value: str, remote_tmux: str = "") -> int:
     if created.returncode == 0 and window_id:
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_bridge", "1"])
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_key", target["key"]])
+        run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_session_key", remote_session_key])
         run([str(Path(__file__).resolve().with_name("refresh_bells.py"))])
     return created.returncode
 
