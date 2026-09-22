@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from agent_picker import (  # noqa: E402
     SEP,
+    Pane,
     Window,
     decode_target,
     format_row,
