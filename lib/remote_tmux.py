@@ -73,7 +73,10 @@ def remote_inventory(
     hook_command = "set-option -w -t '#{window_id}' @agent_picker_last_view '#{t:%s}'"
     install_hook = shlex.join([*tmux_command, "set-hook", "-g", "after-select-window[999]", hook_command])
     list_panes = shlex.join([*tmux_command, "list-panes", "-a", "-F", tmux_format])
-    remote_command = f"{install_hook} && {list_panes}"
+    # tmux 1.8 (still used by some hosts) has no `set-hook` command. Focus
+    # tracking is optional, so an unsupported hook must not make a healthy
+    # older server appear offline.
+    remote_command = f"{install_hook} >/dev/null 2>&1; {list_panes}"
     ssh_command = ["ssh", "-o", f"ConnectTimeout={max(1, int(timeout))}"]
     # WSSH rejects an explicitly supplied BatchMode option, even when it is
     # set to "no". "auto" leaves the SSH client defaults untouched.
