@@ -392,7 +392,7 @@ def format_row(window: Window, current_window: str = "") -> str:
     )
     display = (
         f"{marker}{bell} {state}  {agent:<7.7}  {window.host:<10.10}  "
-        f"{clean(name):<40.40}  {clean(truncate(summary, 120))}"
+        f"{clean(name):<60.60}  {clean(truncate(summary, 100))}"
     )
     return f"{target}\t{display}"
 
