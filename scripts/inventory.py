@@ -268,7 +268,11 @@ def main() -> int:
     apply_remote_watch_overlay(windows, remote_history, cache_path)
     apply_bell_overlay(windows)
     mru = load_mru()
-    mru.update(remote_history)
+    # A selection made through this picker is recorded locally immediately.
+    # Cached remote focus data can legitimately be older, so never let it
+    # demote a just-selected window.
+    for key, timestamp in remote_history.items():
+        mru[key] = max(mru.get(key, 0), timestamp)
     windows = sort_windows(windows, args.sort, mru)
     for window in windows:
         print(format_row(window, args.current_window))
