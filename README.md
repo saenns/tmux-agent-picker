@@ -79,6 +79,11 @@ remote host. Remote scrollback is never fetched.
 
 ## Remote hosts
 
+Remote transport is independent of the optional Codex/Claude integration.
+`lib/remote_tmux.py` owns SSH inventory, remote tmux focus tracking, MRU
+import, and bridge command construction. It works with ordinary tmux windows;
+agent hooks only enrich rows with state and summaries.
+
 Configure comma-separated `label=ssh-target` entries:
 
 ```tmux

@@ -23,7 +23,7 @@ from agent_picker import (  # noqa: E402
     Pane,
     Window,
 )
-from inventory import remote_attach_command  # noqa: E402
+from remote_tmux import remote_attach_command  # noqa: E402
 from summarize import extract_output_text  # noqa: E402
 
 

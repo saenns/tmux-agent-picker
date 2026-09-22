@@ -4,27 +4,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import subprocess
 import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from agent_picker import (  # noqa: E402
     SEP,
-    Pane,
     Window,
     decode_target,
     format_row,
     load_mru,
-    parse_hosts,
     parse_inventory,
     record_mru,
     scrollback_summary,
     sort_windows,
 )
+from remote_tmux import collect_remote_windows, remote_attach_command
 
 
 FORMAT_FIELDS = (
@@ -74,131 +70,16 @@ def local_inventory() -> list[Window]:
     return windows
 
 
-def remote_tmux_command(label: str, configured: str) -> list[str]:
-    """Return the tmux executable for a host from label=command mappings."""
-    for entry in configured.split(","):
-        entry = entry.strip()
-        if not entry or "=" not in entry:
-            continue
-        entry_label, command = entry.split("=", 1)
-        if entry_label.strip() == label and command.strip():
-            return shlex.split(command)
-    return ["tmux"]
-
-
-def remote_mru(label: str, target: str, ssh_command: list[str], windows: list[Window], timeout: float) -> dict[str, float]:
-    result = run([*ssh_command, "cat ~/.local/state/tmux-agent-picker/mru.json"], timeout=timeout + 1)
-    if result.returncode != 0:
-        return {}
-    try:
-        source = json.loads(result.stdout)
-    except (ValueError, TypeError):
-        return {}
-    windows_by_id = {window.window_id: window for window in windows}
-    merged: dict[str, float] = {}
-    for key, timestamp in source.items():
-        parts = str(key).split("|", 2)
-        if len(parts) != 3 or parts[0] != "local":
-            continue
-        window = windows_by_id.get(parts[2])
-        if not window:
-            continue
-        try:
-            remote_key = f"{label}|{window.session_id}|{window.window_id}"
-            # Older picker hooks sometimes wrote the same window under more
-            # than one session key.  Retain the latest timestamp, never the
-            # last JSON entry.
-            merged[remote_key] = max(merged.get(remote_key, 0), float(timestamp))
-        except (TypeError, ValueError):
-            continue
-    return merged
-
-
-def remote_inventory(
-    label: str, target: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int
-) -> tuple[list[Window], dict[str, float]]:
-    tmux_command = remote_tmux_command(label, remote_tmux)
-    # This is a native tmux hook, not a remote plugin dependency.  It is
-    # installed into the live server under our own stable hook index whenever
-    # inventory runs, so it also comes back after a remote tmux restart.
-    # Keep tmux-fzf's @last_view untouched; this distinct option is the
-    # generic fallback for hosts with no picker installation.
-    hook_command = "set-option -w -t '#{window_id}' @agent_picker_last_view '#{t:%s}'"
-    install_hook = shlex.join([*tmux_command, "set-hook", "-g", "after-select-window[999]", hook_command])
-    list_panes = shlex.join([*tmux_command, "list-panes", "-a", "-F", TMUX_FORMAT])
-    remote_command = f"{install_hook} && {list_panes}"
-    ssh_command = ["ssh", "-o", f"ConnectTimeout={max(1, int(timeout))}"]
-    # WSSH rejects an explicitly supplied BatchMode option, even when it is
-    # set to "no".  "auto" leaves the SSH client defaults untouched.
-    if batch_mode != "auto":
-        ssh_command.extend(["-o", f"BatchMode={batch_mode}"])
-    ssh_command.append(target)
-    result = None
-    for attempt in range(max(0, retries) + 1):
-        try:
-            result = run([*ssh_command, remote_command], timeout=timeout + 1)
-        except (subprocess.TimeoutExpired, OSError):
-            result = None
-        if result and result.returncode == 0:
-            break
-        if attempt >= retries:
-            break
-        error = result.stderr.lower() if result else ""
-        connection_failure = result is None or any(
-            marker in error
-            for marker in (
-                "connection reset",
-                "connection closed",
-                "broken pipe",
-                "connection timed out",
-                "mux_client",
-                "control socket",
-            )
-        )
-        if not connection_failure:
-            break
-        time.sleep(0.2)
-    if result and result.returncode == 0:
-        windows = parse_inventory(result.stdout, label, target)
-        history = remote_mru(label, target, ssh_command, windows, timeout)
-        # Some hosts use tmux-fzf's @last_view hook as the canonical focus
-        # history. Prefer it over the generic picker history when available.
-        for window in windows:
-            if window.last_view:
-                history[window.key] = window.last_view
-        return windows, history
-    return [
-        Window(
-            host=label,
-            ssh_target=target,
-            session_id="",
-            session_name="unavailable",
-            window_id="",
-            window_index="-",
-            window_name="remote host offline",
-            active=False,
-            panes=[Pane("", "0", True, "", "", "0", "offline", "", "", "", "", "")],
-        )
-    ], {}
-
-
 def collect(
     hosts_value: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int
 ) -> tuple[list[Window], dict[str, float]]:
     windows = local_inventory()
     remote_history: dict[str, float] = {}
-    hosts = parse_hosts(hosts_value)
-    if not hosts:
-        return windows, remote_history
-    with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as executor:
-        futures = {
-            executor.submit(remote_inventory, label, target, timeout, batch_mode, remote_tmux, retries): label
-            for label, target in hosts
-        }
-        for future in as_completed(futures):
-            remote_windows, history = future.result()
-            windows.extend(remote_windows)
-            remote_history.update(history)
+    remote_windows, history = collect_remote_windows(
+        hosts_value, timeout, batch_mode, remote_tmux, retries, TMUX_FORMAT
+    )
+    windows.extend(remote_windows)
+    remote_history.update(history)
     return windows, remote_history
 
 
@@ -238,28 +119,6 @@ def save_cache(path: Path, windows: list[Window], remote_history: dict[str, floa
     temporary = path.with_suffix(f".{os.getpid()}.tmp")
     temporary.write_text(json.dumps(payload, separators=(",", ":")))
     temporary.replace(path)
-
-
-def remote_attach_command(target: dict[str, str], remote_tmux: str = "") -> str:
-    tmux_command = remote_tmux_command(target.get("host", ""), remote_tmux)
-    remote = shlex.join(
-        [
-            *tmux_command,
-            "select-window",
-            "-t",
-            target["window_id"],
-            ";",
-            "select-pane",
-            "-t",
-            target["pane"],
-            ";",
-            "attach-session",
-            "-t",
-            target["session"],
-        ]
-    )
-    bridge = Path(__file__).resolve().with_name("bridge.sh")
-    return shlex.join([str(bridge), target["ssh"], remote])
 
 
 def select(value: str, remote_tmux: str = "") -> int:
