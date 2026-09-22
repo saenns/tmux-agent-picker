@@ -23,7 +23,7 @@ from agent_picker import (  # noqa: E402
     Pane,
     Window,
 )
-from remote_tmux import remote_attach_command  # noqa: E402
+from remote_tmux import remote_attach_command, remote_focus_command  # noqa: E402
 from summarize import extract_output_text  # noqa: E402
 
 
@@ -107,6 +107,13 @@ class AgentPickerTests(unittest.TestCase):
         self.assertIn("bridge.sh me@dev", command)
         self.assertIn("attach-session", command)
         self.assertIn("work tree", command)
+
+    def test_remote_focus_does_not_attach_a_second_client(self) -> None:
+        command = remote_focus_command(
+            {"host": "dev", "window_id": "@4", "pane": "%9"}
+        )
+        self.assertIn("select-window", command)
+        self.assertNotIn("attach-session", command)
 
     def test_fallback_summary_prefers_first_substantive_line(self) -> None:
         message = "# Summary\n\n- Added cached async summaries.\n- Tests pass."

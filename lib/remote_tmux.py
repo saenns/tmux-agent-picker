@@ -138,3 +138,12 @@ def remote_attach_command(target: dict[str, str], remote_tmux: str = "") -> str:
     ])
     bridge = Path(__file__).resolve().parents[1] / "scripts" / "bridge.sh"
     return shlex.join([str(bridge), target["ssh"], remote])
+
+
+def remote_focus_command(target: dict[str, str], remote_tmux: str = "") -> str:
+    """Return the non-interactive tmux focus command for an existing bridge."""
+    tmux_command = remote_tmux_command(target.get("host", ""), remote_tmux)
+    return shlex.join([
+        *tmux_command, "select-window", "-t", target["window_id"], ";",
+        "select-pane", "-t", target["pane"],
+    ])

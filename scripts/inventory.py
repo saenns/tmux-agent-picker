@@ -21,7 +21,7 @@ from agent_picker import (  # noqa: E402
     scrollback_summary,
     sort_windows,
 )
-from remote_tmux import collect_remote_windows, remote_attach_command
+from remote_tmux import collect_remote_windows, remote_attach_command, remote_focus_command
 
 
 FORMAT_FIELDS = (
@@ -189,6 +189,13 @@ def select(value: str, remote_tmux: str = "") -> int:
         matches.append((fields[2] == "1", activity, fields[0]))
     if matches:
         _, _, window_id = max(matches)
+        # The bridge remains attached, but another remote client may have
+        # changed the session's selected window since it was opened. Focus the
+        # requested remote target first; this also clears its native bell flag.
+        try:
+            run(["ssh", "-o", "ConnectTimeout=2", target["ssh"], remote_focus_command(target, remote_tmux)], timeout=3)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
         return run(["tmux", "select-window", "-t", window_id]).returncode
 
     command = remote_attach_command(target, remote_tmux)
