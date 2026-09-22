@@ -34,6 +34,7 @@ FORMAT_FIELDS = (
     "#{window_index}",
     "#{window_name}",
     "#{window_active}",
+    "#{window_bell_flag}",
     "#{pane_id}",
     "#{pane_index}",
     "#{pane_active}",
@@ -83,9 +84,33 @@ def remote_tmux_command(label: str, configured: str) -> list[str]:
     return ["tmux"]
 
 
+def remote_mru(label: str, target: str, ssh_command: list[str], windows: list[Window], timeout: float) -> dict[str, float]:
+    result = run([*ssh_command, "cat ~/.local/state/tmux-agent-picker/mru.json"], timeout=timeout + 1)
+    if result.returncode != 0:
+        return {}
+    try:
+        source = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return {}
+    windows_by_id = {window.window_id: window for window in windows}
+    merged: dict[str, float] = {}
+    for key, timestamp in source.items():
+        parts = str(key).split("|", 2)
+        if len(parts) != 3 or parts[0] != "local":
+            continue
+        window = windows_by_id.get(parts[2])
+        if not window:
+            continue
+        try:
+            merged[f"{label}|{window.session_id}|{window.window_id}"] = float(timestamp)
+        except (TypeError, ValueError):
+            continue
+    return merged
+
+
 def remote_inventory(
     label: str, target: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int
-) -> list[Window]:
+) -> tuple[list[Window], dict[str, float]]:
     tmux_command = remote_tmux_command(label, remote_tmux)
     remote_command = shlex.join([*tmux_command, "list-panes", "-a", "-F", TMUX_FORMAT])
     ssh_command = ["ssh", "-o", f"ConnectTimeout={max(1, int(timeout))}"]
@@ -93,11 +118,11 @@ def remote_inventory(
     # set to "no".  "auto" leaves the SSH client defaults untouched.
     if batch_mode != "auto":
         ssh_command.extend(["-o", f"BatchMode={batch_mode}"])
-    ssh_command.extend([target, remote_command])
+    ssh_command.append(target)
     result = None
     for attempt in range(max(0, retries) + 1):
         try:
-            result = run(ssh_command, timeout=timeout + 1)
+            result = run([*ssh_command, remote_command], timeout=timeout + 1)
         except (subprocess.TimeoutExpired, OSError):
             result = None
         if result and result.returncode == 0:
@@ -120,7 +145,8 @@ def remote_inventory(
             break
         time.sleep(0.2)
     if result and result.returncode == 0:
-        return parse_inventory(result.stdout, label, target)
+        windows = parse_inventory(result.stdout, label, target)
+        return windows, remote_mru(label, target, ssh_command, windows, timeout)
     return [
         Window(
             host=label,
@@ -133,39 +159,45 @@ def remote_inventory(
             active=False,
             panes=[Pane("", "0", True, "", "", "0", "offline", "", "", "", "", "")],
         )
-    ]
+    ], {}
 
 
-def collect(hosts_value: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int) -> list[Window]:
+def collect(
+    hosts_value: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int
+) -> tuple[list[Window], dict[str, float]]:
     windows = local_inventory()
+    remote_history: dict[str, float] = {}
     hosts = parse_hosts(hosts_value)
     if not hosts:
-        return windows
+        return windows, remote_history
     with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as executor:
         futures = {
             executor.submit(remote_inventory, label, target, timeout, batch_mode, remote_tmux, retries): label
             for label, target in hosts
         }
         for future in as_completed(futures):
-            windows.extend(future.result())
-    return windows
+            remote_windows, history = future.result()
+            windows.extend(remote_windows)
+            remote_history.update(history)
+    return windows, remote_history
 
 
-def load_cache(path: Path) -> list[Window] | None:
+def load_cache(path: Path) -> tuple[list[Window], dict[str, float]] | None:
     try:
         payload = json.loads(path.read_text())
         windows = []
         for item in payload["windows"]:
             panes = [Pane(**pane) for pane in item.pop("panes", [])]
             windows.append(Window(**item, panes=panes))
-        return windows
+        return windows, {str(key): float(value) for key, value in payload.get("mru", {}).items()}
     except (FileNotFoundError, OSError, ValueError, TypeError, KeyError):
         return None
 
 
-def save_cache(path: Path, windows: list[Window]) -> None:
+def save_cache(path: Path, windows: list[Window], remote_history: dict[str, float]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     payload = {
+        "mru": remote_history,
         "windows": [
             {
                 "host": window.host,
@@ -176,6 +208,7 @@ def save_cache(path: Path, windows: list[Window]) -> None:
                 "window_index": window.window_index,
                 "window_name": window.window_name,
                 "active": window.active,
+                "bell": window.bell,
                 "panes": [pane.__dict__ for pane in window.panes],
             }
             for window in windows
@@ -268,12 +301,18 @@ def main() -> int:
     if args.select:
         return select(args.select, args.remote_tmux)
     cache_path = Path(args.cache_file).expanduser() if args.cache_file else None
-    windows = None if args.refresh_cache else (load_cache(cache_path) if cache_path else None)
-    if windows is None:
-        windows = collect(args.hosts, args.timeout, args.ssh_batch_mode, args.remote_tmux, args.ssh_retries)
+    cached = None if args.refresh_cache else (load_cache(cache_path) if cache_path else None)
+    if cached is None:
+        windows, remote_history = collect(
+            args.hosts, args.timeout, args.ssh_batch_mode, args.remote_tmux, args.ssh_retries
+        )
         if cache_path:
-            save_cache(cache_path, windows)
-    windows = sort_windows(windows, args.sort, load_mru())
+            save_cache(cache_path, windows, remote_history)
+    else:
+        windows, remote_history = cached
+    mru = load_mru()
+    mru.update(remote_history)
+    windows = sort_windows(windows, args.sort, mru)
     for window in windows:
         print(format_row(window, args.current_window))
     return 0

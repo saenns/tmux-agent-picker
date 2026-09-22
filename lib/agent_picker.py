@@ -149,6 +149,7 @@ class Window:
     window_name: str
     active: bool
     panes: list[Pane] = field(default_factory=list)
+    bell: bool = False
 
     @property
     def key(self) -> str:
@@ -184,7 +185,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
         # return the control character directly.
         line = line.replace("\\037", SEP)
         fields = line.split(SEP)
-        if len(fields) != 21:
+        if len(fields) != 22:
             continue
         (
             session_id,
@@ -193,6 +194,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
             window_index,
             window_name,
             window_active,
+            window_bell,
             pane_id,
             pane_index,
             pane_active,
@@ -222,6 +224,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
                 window_index=window_index,
                 window_name=window_name,
                 active=window_active == "1",
+                bell=window_bell == "1",
             )
         windows[key].panes.append(
             Pane(
@@ -342,6 +345,7 @@ def scrollback_summary(scrollback: str, command: str = "", limit: int = 120) -> 
 def format_row(window: Window, current_window: str = "") -> str:
     pane = window.selected_pane
     marker = "*" if window.host == "local" and window.window_id == current_window else " "
+    bell = "!" if window.bell else " "
     label = STATE_LABEL[window.state]
     state = f"{STATE_COLOR[window.state]}{label}{RESET}"
     agent = window.agent or "-"
@@ -369,7 +373,7 @@ def format_row(window: Window, current_window: str = "") -> str:
         }
     )
     display = (
-        f"{marker} {state}  {agent:<7.7}  {window.host:<10.10}  "
+        f"{marker}{bell} {state}  {agent:<7.7}  {window.host:<10.10}  "
         f"{clean(name):<40.40}  {clean(truncate(summary, 120))}"
     )
     return f"{target}\t{display}"

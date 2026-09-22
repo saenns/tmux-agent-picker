@@ -38,6 +38,7 @@ def row(
             window_id.removeprefix("@"),
             "editor",
             "1",
+            "0",
             "%1",
             "0",
             "1",

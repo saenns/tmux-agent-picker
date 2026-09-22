@@ -54,6 +54,7 @@ while true; do
 
   selection=$(printf '%s\n' "$rows" | "$fzf_bin" \
     --ansi \
+    --no-mouse \
     --no-sort \
     --delimiter=$'\t' \
     --with-nth=2.. \
