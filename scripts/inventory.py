@@ -65,6 +65,27 @@ def apply_bell_overlay(windows: list[Window]) -> None:
             window.bell = True
 
 
+def apply_remote_watch_overlay(windows: list[Window], history: dict[str, float], cache_path: Path | None) -> None:
+    """Replace remote cache rows with snapshots from persistent SSH watchers."""
+    if not cache_path:
+        return
+    cache_key = cache_path.stem.removeprefix("inventory-")
+    for path in cache_path.parent.glob(f"watch-{cache_key}-*.json"):
+        try:
+            payload = json.loads(path.read_text())
+            label, target, snapshot = payload["host"], payload["ssh"], payload["snapshot"]
+            fresh = parse_inventory(snapshot, label, target)
+        except (FileNotFoundError, OSError, ValueError, TypeError, KeyError):
+            continue
+        if not fresh:
+            continue
+        windows[:] = [window for window in windows if window.host != label]
+        windows.extend(fresh)
+        for window in fresh:
+            if window.last_view:
+                history[window.key] = window.last_view
+
+
 def run(command: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, timeout=timeout, check=False)
 
@@ -204,6 +225,7 @@ def main() -> int:
             save_cache(cache_path, windows, remote_history)
     else:
         windows, remote_history = cached
+    apply_remote_watch_overlay(windows, remote_history, cache_path)
     apply_bell_overlay(windows)
     mru = load_mru()
     mru.update(remote_history)
