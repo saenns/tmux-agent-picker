@@ -222,6 +222,11 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
             summary_status,
             summary_turn,
         ) = fields
+        # Bridge viewer sessions are grouped copies of a real session. They
+        # exist solely to isolate an interactive bridge's selected window and
+        # must never appear as a second copy in any inventory.
+        if session_name.startswith("__tap_"):
+            continue
         if hidden == "1" or bridge == "1":
             continue
         key = (session_id, window_id)
