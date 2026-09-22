@@ -5,11 +5,19 @@ plugin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 sort_mode=$(tmux show-option -gqv @agent-picker-sort)
 hosts=$(tmux show-option -gqv @agent-picker-hosts)
 timeout=$(tmux show-option -gqv @agent-picker-ssh-timeout)
+batch_mode=$(tmux show-option -gqv @agent-picker-ssh-batch-mode)
+remote_tmux=$(tmux show-option -gqv @agent-picker-remote-tmux)
+retries=$(tmux show-option -gqv @agent-picker-ssh-retries)
 fzf_bin=$(tmux show-option -gqv @agent-picker-fzf)
 current_window=$(tmux display-message -p '#{window_id}')
 
 sort_mode=${sort_mode:-mru}
 timeout=${timeout:-2}
+batch_mode=${batch_mode:-yes}
+retries=${retries:-0}
+cache_root=${XDG_CACHE_HOME:-$HOME/.cache}/tmux-agent-picker
+cache_key=$(printf '%s' "$hosts|$timeout|$batch_mode|$remote_tmux|$retries" | shasum -a 256 | awk '{print $1}')
+cache_file="$cache_root/inventory-$cache_key.json"
 if [[ -z $fzf_bin ]]; then
   fzf_bin=$(command -v fzf 2>/dev/null || true)
 fi
@@ -22,12 +30,27 @@ if [[ -z $fzf_bin ]]; then
   exit 1
 fi
 
-while true; do
-  rows=$("$plugin_dir/scripts/inventory.py" \
+inventory() {
+  "$plugin_dir/scripts/inventory.py" \
     --sort "$sort_mode" \
     --hosts "$hosts" \
     --timeout "$timeout" \
-    --current-window "$current_window")
+    --ssh-batch-mode "$batch_mode" \
+    --remote-tmux "$remote_tmux" \
+    --ssh-retries "$retries" \
+    --current-window "$current_window" \
+    --cache-file "$cache_file" "$@"
+}
+
+refresh=0
+while true; do
+  if [[ $refresh == 1 || ! -s $cache_file ]]; then
+    rows=$(inventory --refresh-cache)
+    refresh=0
+  else
+    rows=$(inventory)
+    inventory --refresh-cache >/dev/null 2>&1 &
+  fi
 
   selection=$(printf '%s\n' "$rows" | "$fzf_bin" \
     --ansi \
@@ -55,6 +78,7 @@ while true; do
       continue
       ;;
     ctrl-r)
+      refresh=1
       continue
       ;;
   esac
@@ -62,5 +86,5 @@ while true; do
   # With --expect, the first line is empty for Enter and the selected row is second.
   [[ -n $row ]] || row=$action
   token=${row%%$'\t'*}
-  [[ -n $token ]] && exec "$plugin_dir/scripts/inventory.py" --select "$token"
+  [[ -n $token ]] && exec "$plugin_dir/scripts/inventory.py" --remote-tmux "$remote_tmux" --ssh-retries "$retries" --select "$token"
 done

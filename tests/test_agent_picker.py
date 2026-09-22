@@ -27,7 +27,9 @@ from inventory import remote_attach_command  # noqa: E402
 from summarize import extract_output_text  # noqa: E402
 
 
-def row(window_id: str, command: str, state: str = "", agent: str = "") -> str:
+def row(
+    window_id: str, command: str, state: str = "", agent: str = "", pane_title: str = ""
+) -> str:
     return SEP.join(
         (
             "$1",
@@ -40,6 +42,7 @@ def row(window_id: str, command: str, state: str = "", agent: str = "") -> str:
             "0",
             "1",
             command,
+            pane_title,
             "/home/me/code/project",
             "0",
             state,

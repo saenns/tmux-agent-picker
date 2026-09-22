@@ -130,6 +130,7 @@ class Pane:
     summary: str
     summary_status: str
     summary_turn: str
+    title: str = ""
 
     @property
     def state_agent(self) -> tuple[str, str]:
@@ -178,8 +179,12 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
     for line in text.splitlines():
         if not line:
             continue
+        # tmux 3.5a renders a control-character format separator as its octal
+        # spelling ("\\037") when invoked remotely.  Older tmux versions
+        # return the control character directly.
+        line = line.replace("\\037", SEP)
         fields = line.split(SEP)
-        if len(fields) != 20:
+        if len(fields) != 21:
             continue
         (
             session_id,
@@ -192,6 +197,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
             pane_index,
             pane_active,
             command,
+            title,
             path,
             dead,
             explicit_state,
@@ -231,6 +237,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
                 summary=summary,
                 summary_status=summary_status,
                 summary_turn=summary_turn,
+                title=title,
             )
         )
     return list(windows.values())
@@ -338,8 +345,12 @@ def format_row(window: Window, current_window: str = "") -> str:
     label = STATE_LABEL[window.state]
     state = f"{STATE_COLOR[window.state]}{label}{RESET}"
     agent = window.agent or "-"
-    location = f"{window.session_name}:{window.window_index}"
     name = window.window_name or "-"
+    # Coding agents keep the window name generic but update the pane title with
+    # the active task. Keep explicit window names (especially remote ones) as
+    # the primary label.
+    if name.strip().lower() in AGENT_COMMANDS and pane.title.strip():
+        name = re.sub(r"^\W+", "", clean(pane.title)).strip() or name
     summary = pane.summary.strip()
     if not summary:
         summary = pane.command
@@ -359,8 +370,7 @@ def format_row(window: Window, current_window: str = "") -> str:
     )
     display = (
         f"{marker} {state}  {agent:<7.7}  {window.host:<10.10}  "
-        f"{clean(location):<22.22}  {clean(name):<20.20}  "
-        f"{clean(compact_path(window.path)):<28.28}  {clean(truncate(summary, 120))}"
+        f"{clean(name):<40.40}  {clean(truncate(summary, 120))}"
     )
     return f"{target}\t{display}"
 

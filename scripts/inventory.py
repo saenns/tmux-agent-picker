@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import shlex
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -35,6 +38,7 @@ FORMAT_FIELDS = (
     "#{pane_index}",
     "#{pane_active}",
     "#{pane_current_command}",
+    "#{pane_title}",
     "#{pane_current_path}",
     "#{pane_dead}",
     "#{@agent_picker_state}",
@@ -67,23 +71,54 @@ def local_inventory() -> list[Window]:
     return windows
 
 
-def remote_inventory(label: str, target: str, timeout: float) -> list[Window]:
-    remote_command = "tmux list-panes -a -F " + shlex.quote(TMUX_FORMAT)
-    try:
-        result = run(
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                f"ConnectTimeout={max(1, int(timeout))}",
-                target,
-                remote_command,
-            ],
-            timeout=timeout + 1,
+def remote_tmux_command(label: str, configured: str) -> list[str]:
+    """Return the tmux executable for a host from label=command mappings."""
+    for entry in configured.split(","):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        entry_label, command = entry.split("=", 1)
+        if entry_label.strip() == label and command.strip():
+            return shlex.split(command)
+    return ["tmux"]
+
+
+def remote_inventory(
+    label: str, target: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int
+) -> list[Window]:
+    tmux_command = remote_tmux_command(label, remote_tmux)
+    remote_command = shlex.join([*tmux_command, "list-panes", "-a", "-F", TMUX_FORMAT])
+    ssh_command = ["ssh", "-o", f"ConnectTimeout={max(1, int(timeout))}"]
+    # WSSH rejects an explicitly supplied BatchMode option, even when it is
+    # set to "no".  "auto" leaves the SSH client defaults untouched.
+    if batch_mode != "auto":
+        ssh_command.extend(["-o", f"BatchMode={batch_mode}"])
+    ssh_command.extend([target, remote_command])
+    result = None
+    for attempt in range(max(0, retries) + 1):
+        try:
+            result = run(ssh_command, timeout=timeout + 1)
+        except (subprocess.TimeoutExpired, OSError):
+            result = None
+        if result and result.returncode == 0:
+            break
+        if attempt >= retries:
+            break
+        error = result.stderr.lower() if result else ""
+        connection_failure = result is None or any(
+            marker in error
+            for marker in (
+                "connection reset",
+                "connection closed",
+                "broken pipe",
+                "connection timed out",
+                "mux_client",
+                "control socket",
+            )
         )
-    except (subprocess.TimeoutExpired, OSError):
-        result = None
+        if not connection_failure:
+            break
+        time.sleep(0.2)
     if result and result.returncode == 0:
         return parse_inventory(result.stdout, label, target)
     return [
@@ -101,14 +136,14 @@ def remote_inventory(label: str, target: str, timeout: float) -> list[Window]:
     ]
 
 
-def collect(hosts_value: str, timeout: float) -> list[Window]:
+def collect(hosts_value: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int) -> list[Window]:
     windows = local_inventory()
     hosts = parse_hosts(hosts_value)
     if not hosts:
         return windows
     with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as executor:
         futures = {
-            executor.submit(remote_inventory, label, target, timeout): label
+            executor.submit(remote_inventory, label, target, timeout, batch_mode, remote_tmux, retries): label
             for label, target in hosts
         }
         for future in as_completed(futures):
@@ -116,16 +151,63 @@ def collect(hosts_value: str, timeout: float) -> list[Window]:
     return windows
 
 
-def remote_attach_command(target: dict[str, str]) -> str:
-    remote = "tmux select-window -t {window} \\; select-pane -t {pane} \\; attach-session -t {session}".format(
-        window=shlex.quote(target["window_id"]),
-        pane=shlex.quote(target["pane"]),
-        session=shlex.quote(target["session"]),
+def load_cache(path: Path) -> list[Window] | None:
+    try:
+        payload = json.loads(path.read_text())
+        windows = []
+        for item in payload["windows"]:
+            panes = [Pane(**pane) for pane in item.pop("panes", [])]
+            windows.append(Window(**item, panes=panes))
+        return windows
+    except (FileNotFoundError, OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def save_cache(path: Path, windows: list[Window]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = {
+        "windows": [
+            {
+                "host": window.host,
+                "ssh_target": window.ssh_target,
+                "session_id": window.session_id,
+                "session_name": window.session_name,
+                "window_id": window.window_id,
+                "window_index": window.window_index,
+                "window_name": window.window_name,
+                "active": window.active,
+                "panes": [pane.__dict__ for pane in window.panes],
+            }
+            for window in windows
+        ]
+    }
+    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, separators=(",", ":")))
+    temporary.replace(path)
+
+
+def remote_attach_command(target: dict[str, str], remote_tmux: str = "") -> str:
+    tmux_command = remote_tmux_command(target.get("host", ""), remote_tmux)
+    remote = shlex.join(
+        [
+            *tmux_command,
+            "select-window",
+            "-t",
+            target["window_id"],
+            ";",
+            "select-pane",
+            "-t",
+            target["pane"],
+            ";",
+            "attach-session",
+            "-t",
+            target["session"],
+        ]
     )
     return shlex.join(["ssh", "-tt", target["ssh"], remote])
 
 
-def select(value: str) -> int:
+def select(value: str, remote_tmux: str = "") -> int:
     target = decode_target(value)
     if not target.get("window_id"):
         return 1
@@ -150,7 +232,7 @@ def select(value: str) -> int:
         if len(fields) == 2 and fields[1] == target["key"]:
             return run(["tmux", "select-window", "-t", fields[0]]).returncode
 
-    command = remote_attach_command(target)
+    command = remote_attach_command(target, remote_tmux)
     created = run(
         [
             "tmux",
@@ -176,11 +258,22 @@ def main() -> int:
     parser.add_argument("--hosts", default="")
     parser.add_argument("--current-window", default="")
     parser.add_argument("--timeout", type=float, default=2.0)
+    parser.add_argument("--ssh-batch-mode", choices=("yes", "no", "auto"), default="yes")
+    parser.add_argument("--remote-tmux", default="")
+    parser.add_argument("--ssh-retries", type=int, default=0)
+    parser.add_argument("--cache-file")
+    parser.add_argument("--refresh-cache", action="store_true")
     parser.add_argument("--select")
     args = parser.parse_args()
     if args.select:
-        return select(args.select)
-    windows = sort_windows(collect(args.hosts, args.timeout), args.sort, load_mru())
+        return select(args.select, args.remote_tmux)
+    cache_path = Path(args.cache_file).expanduser() if args.cache_file else None
+    windows = None if args.refresh_cache else (load_cache(cache_path) if cache_path else None)
+    if windows is None:
+        windows = collect(args.hosts, args.timeout, args.ssh_batch_mode, args.remote_tmux, args.ssh_retries)
+        if cache_path:
+            save_cache(cache_path, windows)
+    windows = sort_windows(windows, args.sort, load_mru())
     for window in windows:
         print(format_row(window, args.current_window))
     return 0
