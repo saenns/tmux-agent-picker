@@ -165,7 +165,7 @@ def select(value: str, remote_tmux: str = "") -> int:
         selected = run(["tmux", "select-window", "-t", target["window_id"]])
         return selected.returncode or switched.returncode
 
-    bridge_name = f"{target['host']}:{target['session']}"
+    bridge_name = target.get("bridge_name") or f"{target['host']}:{target['session']}"
     existing = run(
         [
             "tmux",
@@ -189,6 +189,7 @@ def select(value: str, remote_tmux: str = "") -> int:
         matches.append((fields[2] == "1", activity, fields[0]))
     if matches:
         _, _, window_id = max(matches)
+        run(["tmux", "rename-window", "-t", window_id, bridge_name])
         return run(["tmux", "select-window", "-t", window_id]).returncode
 
     command = remote_attach_command(target, remote_tmux)
