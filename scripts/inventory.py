@@ -197,6 +197,7 @@ def select(value: str, remote_tmux: str = "") -> int:
     if created.returncode == 0 and window_id:
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_bridge", "1"])
         run(["tmux", "set-option", "-w", "-t", window_id, "@agent_picker_remote_key", target["key"]])
+        run([str(Path(__file__).resolve().with_name("refresh_bells.py"))])
     return created.returncode
 
 

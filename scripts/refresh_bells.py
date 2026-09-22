@@ -15,7 +15,7 @@ def overlay_path() -> Path:
 
 def main() -> int:
     result = subprocess.run(
-        ["tmux", "list-windows", "-a", "-F", "#{session_id}\t#{window_id}\t#{window_bell_flag}\t#{@agent_picker_remote_key}"],
+        ["tmux", "list-windows", "-a", "-F", "#{session_id}\t#{window_id}\t#{window_active}\t#{window_bell_flag}\t#{@agent_picker_remote_key}"],
         text=True,
         capture_output=True,
         check=False,
@@ -27,16 +27,32 @@ def main() -> int:
         values = {str(key): float(value) for key, value in json.loads(path.read_text()).items()}
     except (FileNotFoundError, OSError, ValueError, TypeError):
         values = {}
+    remote_bells: set[str] = set()
+    remote_views: set[str] = set()
     for line in result.stdout.splitlines():
         fields = line.split("\t")
-        if len(fields) != 4:
+        if len(fields) != 5:
             continue
-        session_id, window_id, bell, remote_key = fields
+        session_id, window_id, active, bell, remote_key = fields
         key = remote_key or f"local|{session_id}|{window_id}"
+        if remote_key and active == "1":
+            remote_views.add(remote_key)
+            continue
+        if remote_key:
+            if bell == "1":
+                remote_bells.add(remote_key)
+            continue
         if bell == "1":
             values[key] = 1
         else:
             values.pop(key, None)
+    # A remote target may have several local bridge windows. Viewing it in any
+    # one bridge clears its alert even if an older bridge still has a stale
+    # local bell flag.
+    for key in remote_views:
+        values.pop(key, None)
+    for key in remote_bells - remote_views:
+        values[key] = 1
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(f".{os.getpid()}.tmp")
     temporary.write_text(json.dumps(values, separators=(",", ":")))
