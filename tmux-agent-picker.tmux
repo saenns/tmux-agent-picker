@@ -18,6 +18,7 @@ tmux set-option -gq @agent-picker-ssh-batch-mode "$(option @agent-picker-ssh-bat
 tmux set-option -gq @agent-picker-remote-tmux "$(option @agent-picker-remote-tmux '')"
 tmux set-option -gq @agent-picker-ssh-retries "$(option @agent-picker-ssh-retries 0)"
 tmux set-option -gq @agent-picker-refresh-interval "$(option @agent-picker-refresh-interval 15)"
+tmux set-option -gq @agent-picker-remote-watch "$(option @agent-picker-remote-watch off)"
 tmux set-option -gq @agent-picker-summary-timeout "$(option @agent-picker-summary-timeout 20)"
 
 tmux bind-key "$key" display-popup -E -w "$width" -h "$height" -T 'windows and agents' "$plugin_dir/scripts/picker.sh"
