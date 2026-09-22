@@ -3,13 +3,11 @@ set -u
 
 target=${1:?missing SSH target}
 remote_command=${2:?missing remote command}
-# A single OpenSSH master has a limited number of simultaneous session
-# channels.  Each picker selection is an interactive channel which can stay
-# open in a tmux window, so sharing one master per host eventually causes
-# "Session open refused by peer".  Keep a reusable master per remote tmux
-# target instead.  Reopening that target remains fast, while many open remote
-# windows no longer exhaust one master's channel limit.
-bridge_key=$(printf '%s\\0%s' "$target" "$remote_command" | shasum -a 256 | /usr/bin/awk '{print substr($1, 1, 16)}')
+# A bridge now owns at most one interactive client per remote tmux session.
+# Reusing one control master per host is therefore safe and, crucially, avoids
+# running `axe connect` again for every selected window.  The old key included
+# the remote command (and thus the window id), defeating SSH multiplexing.
+bridge_key=$(printf '%s' "$target" | shasum -a 256 | /usr/bin/awk '{print substr($1, 1, 16)}')
 # Keep this short: OpenSSH appends a temporary suffix while creating the
 # socket, and macOS has a small Unix-domain socket pathname limit.
 control_path="$HOME/.ssh/tap-${bridge_key}-%C"
