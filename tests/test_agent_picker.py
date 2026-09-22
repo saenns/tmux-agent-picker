@@ -103,7 +103,7 @@ class AgentPickerTests(unittest.TestCase):
         command = remote_attach_command(
             {"ssh": "me@dev", "window_id": "@4", "pane": "%9", "session": "work tree"}
         )
-        self.assertIn("ssh -tt -o ControlMaster=no", command)
+        self.assertIn("bridge.sh me@dev", command)
         self.assertIn("attach-session", command)
         self.assertIn("work tree", command)
 

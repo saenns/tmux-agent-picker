@@ -245,12 +245,8 @@ def remote_attach_command(target: dict[str, str], remote_tmux: str = "") -> str:
             target["session"],
         ]
     )
-    # An attached bridge is long-lived. Do not reuse the short-lived control
-    # master used by background inventory; an expired SSM/WSSH tunnel would
-    # otherwise fail at attach time with a broken pipe.
-    return shlex.join(
-        ["ssh", "-tt", "-o", "ControlMaster=no", "-o", "ControlPath=none", target["ssh"], remote]
-    )
+    bridge = Path(__file__).resolve().with_name("bridge.sh")
+    return shlex.join([str(bridge), target["ssh"], remote])
 
 
 def select(value: str, remote_tmux: str = "") -> int:
