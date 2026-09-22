@@ -18,6 +18,10 @@ retries=${retries:-0}
 cache_root=${XDG_CACHE_HOME:-$HOME/.cache}/tmux-agent-picker
 cache_key=$(printf '%s' "$hosts|$timeout|$batch_mode|$remote_tmux|$retries" | shasum -a 256 | awk '{print $1}')
 cache_file="$cache_root/inventory-$cache_key.json"
+live_socket="$cache_root/fzf-$$.sock"
+mkdir -p "$cache_root"
+rm -f -- "$live_socket"
+trap 'rm -f -- "$live_socket"' EXIT
 if [[ -z $fzf_bin ]]; then
   fzf_bin=$(command -v fzf 2>/dev/null || true)
 fi
@@ -42,6 +46,30 @@ inventory() {
     --cache-file "$cache_file" "$@"
 }
 
+# fzf's local control socket lets a completed background refresh replace the
+# list without closing the popup or asking the user to press Ctrl-R.
+reload_command() {
+  printf '%q ' "$plugin_dir/scripts/inventory.py" \
+    --sort "$sort_mode" \
+    --hosts "$hosts" \
+    --timeout "$timeout" \
+    --ssh-batch-mode "$batch_mode" \
+    --remote-tmux "$remote_tmux" \
+    --ssh-retries "$retries" \
+    --current-window "$current_window" \
+    --cache-file "$cache_file"
+}
+
+refresh_in_background() {
+  (
+    inventory --refresh-cache >/dev/null 2>&1
+    [[ -S $live_socket ]] || exit 0
+    command -v curl >/dev/null 2>&1 || exit 0
+    curl --silent --max-time 1 --unix-socket "$live_socket" \
+      -X POST http://localhost/ -d "reload($(reload_command))" >/dev/null 2>&1 || true
+  ) &
+}
+
 refresh=0
 while true; do
   if [[ $refresh == 1 || ! -s $cache_file ]]; then
@@ -49,7 +77,7 @@ while true; do
     refresh=0
   else
     rows=$(inventory)
-    inventory --refresh-cache >/dev/null 2>&1 &
+    refresh_in_background
   fi
 
   selection=$(printf '%s\n' "$rows" | "$fzf_bin" \
@@ -61,6 +89,7 @@ while true; do
     --layout=reverse \
     --border=none \
     --info=inline \
+    --listen="$live_socket" \
     --prompt="windows [$sort_mode]> " \
     --header='enter: open   alt-s/ctrl-s: sort   ctrl-r: refresh   esc: close' \
     --expect=alt-s,ctrl-s,ctrl-r \
