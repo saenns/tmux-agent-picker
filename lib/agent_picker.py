@@ -186,7 +186,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
         # return the control character directly.
         line = line.replace("\\037", SEP)
         fields = line.split(SEP)
-        if len(fields) != 23:
+        if len(fields) != 24:
             continue
         (
             session_id,
@@ -197,6 +197,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
             window_active,
             window_bell,
             window_last_view,
+            window_picker_last_view,
             pane_id,
             pane_index,
             pane_active,
@@ -227,7 +228,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
                 window_name=window_name,
                 active=window_active == "1",
                 bell=window_bell == "1",
-                last_view=float(window_last_view or 0),
+                last_view=max(float(window_last_view or 0), float(window_picker_last_view or 0)),
             )
         windows[key].panes.append(
             Pane(

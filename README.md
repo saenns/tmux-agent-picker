@@ -92,6 +92,12 @@ method must already work. Selecting a remote row creates a local bridge window
 that runs `ssh -tt HOST tmux attach-session -t SESSION`; selecting it again
 reuses that bridge. The remote tmux server supplies persistence.
 
+MRU focus tracking needs no remote plugin: while collecting inventory, the
+picker installs a small native tmux hook in the running remote server. It starts
+tracking after the first inventory refresh and is reinstalled automatically if
+that server restarts. Installing the plugin remotely remains useful for agent
+state and cached summaries.
+
 Because this is tmux inside tmux, the outer tmux consumes the first prefix. Send
 the prefix twice to address the remote tmux, or configure a different prefix on
 remote hosts.

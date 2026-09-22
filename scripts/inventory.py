@@ -36,6 +36,7 @@ FORMAT_FIELDS = (
     "#{window_active}",
     "#{window_bell_flag}",
     "#{@last_view}",
+    "#{@agent_picker_last_view}",
     "#{pane_id}",
     "#{pane_index}",
     "#{pane_active}",
@@ -103,7 +104,11 @@ def remote_mru(label: str, target: str, ssh_command: list[str], windows: list[Wi
         if not window:
             continue
         try:
-            merged[f"{label}|{window.session_id}|{window.window_id}"] = float(timestamp)
+            remote_key = f"{label}|{window.session_id}|{window.window_id}"
+            # Older picker hooks sometimes wrote the same window under more
+            # than one session key.  Retain the latest timestamp, never the
+            # last JSON entry.
+            merged[remote_key] = max(merged.get(remote_key, 0), float(timestamp))
         except (TypeError, ValueError):
             continue
     return merged
@@ -113,7 +118,15 @@ def remote_inventory(
     label: str, target: str, timeout: float, batch_mode: str, remote_tmux: str, retries: int
 ) -> tuple[list[Window], dict[str, float]]:
     tmux_command = remote_tmux_command(label, remote_tmux)
-    remote_command = shlex.join([*tmux_command, "list-panes", "-a", "-F", TMUX_FORMAT])
+    # This is a native tmux hook, not a remote plugin dependency.  It is
+    # installed into the live server under our own stable hook index whenever
+    # inventory runs, so it also comes back after a remote tmux restart.
+    # Keep tmux-fzf's @last_view untouched; this distinct option is the
+    # generic fallback for hosts with no picker installation.
+    hook_command = "set-option -w -t '#{window_id}' @agent_picker_last_view '#{t:%s}'"
+    install_hook = shlex.join([*tmux_command, "set-hook", "-g", "after-select-window[999]", hook_command])
+    list_panes = shlex.join([*tmux_command, "list-panes", "-a", "-F", TMUX_FORMAT])
+    remote_command = f"{install_hook} && {list_panes}"
     ssh_command = ["ssh", "-o", f"ConnectTimeout={max(1, int(timeout))}"]
     # WSSH rejects an explicitly supplied BatchMode option, even when it is
     # set to "no".  "auto" leaves the SSH client defaults untouched.
