@@ -65,21 +65,15 @@ def remote_inventory(
 ) -> tuple[list[Window], dict[str, float]]:
     """Read windows from a remote tmux server over SSH.
 
-    A small native tmux hook records focus timestamps.  It lives in the remote
-    server only and is refreshed by inventory, so no remote plugin or agent
-    hooks are needed for remote MRU ordering.
+    Remote agent metadata is optional; this transport does not install hooks
+    or otherwise mutate the remote tmux server while collecting inventory.
     """
     tmux_command = remote_tmux_command(label, remote_tmux)
     # A hook already runs with the newly selected window as its context.
     # Explicitly targeting ``#{window_id}`` is not expanded by older tmux
     # versions and makes a successful select-window report an error instead.
-    hook_command = "set-option -w @agent_picker_last_view '#{t:%s}'"
-    install_hook = shlex.join([*tmux_command, "set-hook", "-g", "after-select-window[999]", hook_command])
     list_panes = shlex.join([*tmux_command, "list-panes", "-a", "-F", tmux_format])
-    # tmux 1.8 (still used by some hosts) has no `set-hook` command. Focus
-    # tracking is optional, so an unsupported hook must not make a healthy
-    # older server appear offline.
-    remote_command = f"{install_hook} >/dev/null 2>&1; {list_panes}"
+    remote_command = list_panes
     ssh_command = ["ssh", "-o", f"ConnectTimeout={max(1, int(timeout))}"]
     # WSSH rejects an explicitly supplied BatchMode option, even when it is
     # set to "no". "auto" leaves the SSH client defaults untouched.

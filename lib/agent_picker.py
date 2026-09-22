@@ -177,6 +177,14 @@ class Window:
 
 
 def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> list[Window]:
+    def timestamp(value: str) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            # An old remote hook may have left an unexpanded tmux format here.
+            # It must not make the whole picker unavailable.
+            return 0.0
+
     windows: dict[tuple[str, str], Window] = {}
     for line in text.splitlines():
         if not line:
@@ -228,7 +236,7 @@ def parse_inventory(text: str, host: str = "local", ssh_target: str = "") -> lis
                 window_name=window_name,
                 active=window_active == "1",
                 bell=window_bell == "1",
-                last_view=max(float(window_last_view or 0), float(window_picker_last_view or 0)),
+                last_view=max(timestamp(window_last_view), timestamp(window_picker_last_view)),
             )
         windows[key].panes.append(
             Pane(
