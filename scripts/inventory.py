@@ -53,6 +53,18 @@ FORMAT_FIELDS = (
 TMUX_FORMAT = SEP.join(FORMAT_FIELDS)
 
 
+def apply_bell_overlay(windows: list[Window]) -> None:
+    """Apply immediate local/bridge bell events to a cached inventory."""
+    path = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tmux-agent-picker" / "bells.json"
+    try:
+        bells = json.loads(path.read_text())
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return
+    for window in windows:
+        if bells.get(window.key):
+            window.bell = True
+
+
 def run(command: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, timeout=timeout, check=False)
 
@@ -192,6 +204,7 @@ def main() -> int:
             save_cache(cache_path, windows, remote_history)
     else:
         windows, remote_history = cached
+    apply_bell_overlay(windows)
     mru = load_mru()
     mru.update(remote_history)
     windows = sort_windows(windows, args.sort, mru)
